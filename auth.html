@@ -69,6 +69,14 @@
         opacity: 0.56;
       }
 
+      .copy-button {
+        margin-top: 10px;
+        min-height: 44px;
+        color: #f8fbff;
+        background: rgba(255, 255, 255, 0.1);
+        box-shadow: none;
+      }
+
       code,
       textarea {
         font-family: "Cascadia Code", Consolas, monospace;
@@ -118,6 +126,7 @@
       <button id="loginButton" type="button">Sign in with Amazon</button>
       <div id="status" class="status">Ready.</div>
       <textarea id="tokenBox" readonly placeholder="If the desktop app does not open, your token will show here."></textarea>
+      <button id="copyButton" class="copy-button" type="button" hidden>Copy token</button>
       <p>
         In the Amazon console, allow <code>https://anttothe1.github.io</code> as the JavaScript
         origin and <code>https://anttothe1.github.io/LyricVibe/auth.html</code> as the return URL.
@@ -131,6 +140,7 @@
       const params = new URLSearchParams(window.location.search);
       const cleanRedirectUri = window.location.origin + window.location.pathname;
       const loginButton = document.getElementById('loginButton');
+      const copyButton = document.getElementById('copyButton');
       const statusBox = document.getElementById('status');
       const tokenBox = document.getElementById('tokenBox');
 
@@ -166,7 +176,10 @@
         callbackUrl.searchParams.set('token_type', tokenResponse.token_type || 'bearer');
 
         tokenBox.value = tokenResponse.access_token;
-        setStatus('Token received. Opening LyricVibe now. If Windows asks, choose Open LyricVibe.');
+        copyButton.hidden = false;
+        setStatus(
+          'Token received. Opening LyricVibe now. If the app does not update in a few seconds, copy the token below and paste it into LyricVibe\'s Access token field.'
+        );
         window.location.href = callbackUrl.toString();
       }
 
@@ -278,6 +291,17 @@
         startLogin().catch((error) => {
           fail('Could not start Amazon login: ' + (error && error.message ? error.message : String(error)));
         });
+      });
+
+      copyButton.addEventListener('click', async function () {
+        try {
+          await navigator.clipboard.writeText(tokenBox.value);
+          setStatus('Copied. Paste it into LyricVibe under Connection Setup > Access token.');
+        } catch {
+          tokenBox.select();
+          document.execCommand('copy');
+          setStatus('Copied. Paste it into LyricVibe under Connection Setup > Access token.');
+        }
       });
 
       finishLogin().then((handled) => {
