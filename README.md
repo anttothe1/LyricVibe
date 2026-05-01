@@ -46,7 +46,7 @@ Amazon Music detection is implemented as a provider chain in `src/main/detection
 LyricVibe includes a small `auth.html` helper for Login with Amazon. It is designed for a personal GitHub Pages setup at:
 
 ```text
-https://anttothe1.github.io/lyricvibe/auth.html
+https://anttothe1.github.io/LyricVibe/auth.html
 ```
 
 In your Amazon Security Profile web settings, add:
@@ -56,10 +56,10 @@ Allowed JavaScript Origin:
 https://anttothe1.github.io
 
 Allowed Return URL:
-https://anttothe1.github.io/lyricvibe/auth.html
+https://anttothe1.github.io/LyricVibe/auth.html
 ```
 
-Then run the app, paste your Login with Amazon Client ID, and choose **Sign in with Amazon**. The helper uses the browser-based PKCE flow, sends the access token back to LyricVibe with the `lyricvibe://amazon-auth` desktop callback, and saves it locally.
+Then run the app, paste your Login with Amazon Client ID, and choose **Sign in with Amazon**. The helper uses the direct browser-based PKCE flow, sends the access token back to LyricVibe with the `lyricvibe://amazon-auth` desktop callback, and saves it locally.
 
 Important: Login with Amazon alone does not unlock all Amazon Music account data. Music endpoints still require Amazon Music beta approval, the right Music scopes, and a Security Profile ID that Amazon Music has enabled.
 

@@ -104,52 +104,65 @@
         background: rgba(255, 255, 255, 0.08);
         white-space: pre-wrap;
       }
-
-      #amazon-root {
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-      }
     </style>
   </head>
   <body>
-    <div id="amazon-root"></div>
     <main>
       <span class="eyebrow">LyricVibe</span>
       <h1>Amazon Login</h1>
       <p>
         This helper signs you in with Login with Amazon, then sends the access token back to the
-        LyricVibe desktop app. It does not grant Amazon Music API access unless Amazon has enabled
-        Music scopes for your security profile.
+        LyricVibe desktop app. It uses the direct PKCE flow, so Amazon only needs to allow this page
+        as the return URL.
       </p>
-      <button id="loginButton" type="button" disabled>Loading Amazon login...</button>
-      <div id="status" class="status">Waiting for the Amazon login SDK.</div>
+      <button id="loginButton" type="button">Sign in with Amazon</button>
+      <div id="status" class="status">Ready.</div>
       <textarea id="tokenBox" readonly placeholder="If the desktop app does not open, your token will show here."></textarea>
       <p>
-        In the Amazon console, this page should be allowed under
-        <code>https://anttothe1.github.io</code> and
-        <code>https://anttothe1.github.io/lyricvibe/auth.html</code>.
+        In the Amazon console, allow <code>https://anttothe1.github.io</code> as the JavaScript
+        origin and <code>https://anttothe1.github.io/LyricVibe/auth.html</code> as the return URL.
       </p>
     </main>
 
     <script>
+      const AUTH_ENDPOINT = 'https://www.amazon.com/ap/oa';
+      const TOKEN_ENDPOINT = 'https://api.amazon.com/auth/o2/token';
+      const STORAGE_KEY = 'lyricvibeAmazonAuth';
       const params = new URLSearchParams(window.location.search);
-      const clientId = params.get('client_id') || '';
-      const scope = params.get('scope') || 'profile';
-      const returnTo = params.get('return_to') || 'lyricvibe://amazon-auth';
-      const statusBox = document.getElementById('status');
+      const cleanRedirectUri = window.location.origin + window.location.pathname;
       const loginButton = document.getElementById('loginButton');
+      const statusBox = document.getElementById('status');
       const tokenBox = document.getElementById('tokenBox');
 
       function setStatus(message) {
         statusBox.textContent = message;
       }
 
-      function sendToDesktop(tokenResponse) {
-        const callbackUrl = new URL(returnTo);
+      function randomString(byteLength) {
+        const bytes = new Uint8Array(byteLength);
+        crypto.getRandomValues(bytes);
+        return base64Url(bytes);
+      }
+
+      function base64Url(input) {
+        const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+        let binary = '';
+        bytes.forEach((byte) => {
+          binary += String.fromCharCode(byte);
+        });
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      }
+
+      async function sha256(value) {
+        const bytes = new TextEncoder().encode(value);
+        return crypto.subtle.digest('SHA-256', bytes);
+      }
+
+      function sendToDesktop(tokenResponse, saved) {
+        const callbackUrl = new URL(saved.returnTo || 'lyricvibe://amazon-auth');
         callbackUrl.searchParams.set('access_token', tokenResponse.access_token);
         callbackUrl.searchParams.set('expires_in', String(tokenResponse.expires_in || 3600));
-        callbackUrl.searchParams.set('scope', scope);
+        callbackUrl.searchParams.set('scope', tokenResponse.scope || saved.scope || 'profile');
         callbackUrl.searchParams.set('token_type', tokenResponse.token_type || 'bearer');
 
         tokenBox.value = tokenResponse.access_token;
@@ -163,58 +176,121 @@
         loginButton.textContent = 'Try again';
       }
 
-      window.onAmazonLoginReady = function () {
+      async function startLogin() {
+        const clientId = params.get('client_id') || '';
+        const scope = params.get('scope') || 'profile';
+        const returnTo = params.get('return_to') || 'lyricvibe://amazon-auth';
+
         if (!clientId) {
           fail('Missing Client ID. Go back to LyricVibe and paste your Client ID first.');
           return;
         }
 
-        amazon.Login.setClientId(clientId);
-        loginButton.disabled = false;
-        loginButton.textContent = 'Sign in with Amazon';
-        setStatus('Ready. Scope: ' + scope);
-      };
+        loginButton.disabled = true;
+        loginButton.textContent = 'Opening Amazon...';
+
+        const codeVerifier = randomString(64);
+        const codeChallenge = base64Url(await sha256(codeVerifier));
+        const state = randomString(24);
+
+        sessionStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            clientId,
+            scope,
+            returnTo,
+            redirectUri: cleanRedirectUri,
+            codeVerifier,
+            state
+          })
+        );
+
+        const authUrl = new URL(AUTH_ENDPOINT);
+        authUrl.searchParams.set('client_id', clientId);
+        authUrl.searchParams.set('scope', scope);
+        authUrl.searchParams.set('response_type', 'code');
+        authUrl.searchParams.set('redirect_uri', cleanRedirectUri);
+        authUrl.searchParams.set('state', state);
+        authUrl.searchParams.set('code_challenge', codeChallenge);
+        authUrl.searchParams.set('code_challenge_method', 'S256');
+
+        window.location.href = authUrl.toString();
+      }
+
+      async function finishLogin() {
+        const error = params.get('error');
+        if (error) {
+          fail('Amazon login failed: ' + (params.get('error_description') || error));
+          return true;
+        }
+
+        const code = params.get('code');
+        if (!code) return false;
+
+        const savedRaw = sessionStorage.getItem(STORAGE_KEY);
+        if (!savedRaw) {
+          fail('Amazon returned a code, but the login session was missing. Start the login again.');
+          return true;
+        }
+
+        const saved = JSON.parse(savedRaw);
+        if (params.get('state') !== saved.state) {
+          fail('Amazon returned a state value LyricVibe did not expect. Start the login again.');
+          return true;
+        }
+
+        loginButton.disabled = true;
+        loginButton.textContent = 'Saving token...';
+        setStatus('Amazon approved the login. Getting an access token now.');
+
+        try {
+          const body = new URLSearchParams();
+          body.set('grant_type', 'authorization_code');
+          body.set('code', code);
+          body.set('redirect_uri', saved.redirectUri);
+          body.set('client_id', saved.clientId);
+          body.set('code_verifier', saved.codeVerifier);
+
+          const response = await fetch(TOKEN_ENDPOINT, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+            },
+            body
+          });
+
+          const tokenResponse = await response.json();
+          if (!response.ok || tokenResponse.error) {
+            fail('Token request failed: ' + (tokenResponse.error_description || tokenResponse.error || response.status));
+            return true;
+          }
+
+          sessionStorage.removeItem(STORAGE_KEY);
+          sendToDesktop(tokenResponse, saved);
+        } catch (error) {
+          fail('Token request failed: ' + (error && error.message ? error.message : String(error)));
+        }
+
+        return true;
+      }
 
       loginButton.addEventListener('click', function () {
-        loginButton.disabled = true;
-        loginButton.textContent = 'Signing in...';
-        setStatus('Amazon sign-in window opened. Finish the login there.');
-
-        amazon.Login.authorize(
-          {
-            scope: scope,
-            pkce: true,
-            interactive: 'always'
-          },
-          function (response) {
-            if (response.error) {
-              fail('OAuth error: ' + response.error);
-              return;
-            }
-
-            amazon.Login.retrieveToken(response.code, function (tokenResponse) {
-              if (tokenResponse.error) {
-                fail('Token error: ' + tokenResponse.error);
-                return;
-              }
-
-              sendToDesktop(tokenResponse);
-            });
-          }
-        );
+        startLogin().catch((error) => {
+          fail('Could not start Amazon login: ' + (error && error.message ? error.message : String(error)));
+        });
       });
 
-      (function (documentRef) {
-        const script = documentRef.createElement('script');
-        script.type = 'text/javascript';
-        script.async = true;
-        script.id = 'amazon-login-sdk';
-        script.src = 'https://assets.loginwithamazon.com/sdk/na/login1.js';
-        script.onerror = function () {
-          fail('Could not load the Amazon login SDK. Check the internet connection, then reload.');
-        };
-        documentRef.getElementById('amazon-root').appendChild(script);
-      })(document);
+      finishLogin().then((handled) => {
+        if (!handled) {
+          const incomingClientId = params.get('client_id');
+          setStatus(
+            incomingClientId
+              ? 'Ready. Click Sign in with Amazon.'
+              : 'Open this page from LyricVibe so it can include your Client ID.'
+          );
+          loginButton.disabled = !incomingClientId;
+        }
+      });
     </script>
   </body>
 </html>
