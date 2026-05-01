@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LyricVibe Amazon Login</title>
+    <style>
+      :root {
+        color: #f8fbff;
+        background: #05050a;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        padding: 28px;
+        background:
+          radial-gradient(circle at 50% 0%, rgba(31, 239, 255, 0.26), transparent 34%),
+          radial-gradient(circle at 80% 80%, rgba(255, 45, 214, 0.18), transparent 34%),
+          #05050a;
+      }
+
+      main {
+        width: min(680px, 100%);
+        padding: 28px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 20px;
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.045)),
+          rgba(10, 11, 18, 0.86);
+        box-shadow: 0 32px 120px rgba(0, 0, 0, 0.45);
+        backdrop-filter: blur(22px);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(38px, 9vw, 72px);
+        line-height: 0.92;
+      }
+
+      p {
+        color: rgba(255, 255, 255, 0.72);
+        line-height: 1.55;
+      }
+
+      button {
+        width: 100%;
+        min-height: 52px;
+        border: 0;
+        border-radius: 14px;
+        color: #030309;
+        background: linear-gradient(135deg, #20f7ff, #ff2dd6);
+        cursor: pointer;
+        font: inherit;
+        font-weight: 900;
+        box-shadow: 0 0 34px rgba(31, 239, 255, 0.3);
+      }
+
+      button:disabled {
+        cursor: wait;
+        opacity: 0.56;
+      }
+
+      code,
+      textarea {
+        font-family: "Cascadia Code", Consolas, monospace;
+      }
+
+      code {
+        color: #20f7ff;
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 86px;
+        margin-top: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.13);
+        border-radius: 12px;
+        padding: 12px;
+        color: white;
+        background: rgba(0, 0, 0, 0.28);
+        resize: vertical;
+      }
+
+      .eyebrow {
+        color: #20f7ff;
+        font-size: 12px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .status {
+        margin: 18px 0;
+        padding: 14px;
+        border-radius: 14px;
+        background: rgba(255, 255, 255, 0.08);
+        white-space: pre-wrap;
+      }
+
+      #amazon-root {
+        width: 1px;
+        height: 1px;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="amazon-root"></div>
+    <main>
+      <span class="eyebrow">LyricVibe</span>
+      <h1>Amazon Login</h1>
+      <p>
+        This helper signs you in with Login with Amazon, then sends the access token back to the
+        LyricVibe desktop app. It does not grant Amazon Music API access unless Amazon has enabled
+        Music scopes for your security profile.
+      </p>
+      <button id="loginButton" type="button" disabled>Loading Amazon login...</button>
+      <div id="status" class="status">Waiting for the Amazon login SDK.</div>
+      <textarea id="tokenBox" readonly placeholder="If the desktop app does not open, your token will show here."></textarea>
+      <p>
+        In the Amazon console, this page should be allowed under
+        <code>https://anttothe1.github.io</code> and
+        <code>https://anttothe1.github.io/lyricvibe/auth.html</code>.
+      </p>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const clientId = params.get('client_id') || '';
+      const scope = params.get('scope') || 'profile';
+      const returnTo = params.get('return_to') || 'lyricvibe://amazon-auth';
+      const statusBox = document.getElementById('status');
+      const loginButton = document.getElementById('loginButton');
+      const tokenBox = document.getElementById('tokenBox');
+
+      function setStatus(message) {
+        statusBox.textContent = message;
+      }
+
+      function sendToDesktop(tokenResponse) {
+        const callbackUrl = new URL(returnTo);
+        callbackUrl.searchParams.set('access_token', tokenResponse.access_token);
+        callbackUrl.searchParams.set('expires_in', String(tokenResponse.expires_in || 3600));
+        callbackUrl.searchParams.set('scope', scope);
+        callbackUrl.searchParams.set('token_type', tokenResponse.token_type || 'bearer');
+
+        tokenBox.value = tokenResponse.access_token;
+        setStatus('Token received. Opening LyricVibe now. If Windows asks, choose Open LyricVibe.');
+        window.location.href = callbackUrl.toString();
+      }
+
+      function fail(message) {
+        setStatus(message);
+        loginButton.disabled = false;
+        loginButton.textContent = 'Try again';
+      }
+
+      window.onAmazonLoginReady = function () {
+        if (!clientId) {
+          fail('Missing Client ID. Go back to LyricVibe and paste your Client ID first.');
+          return;
+        }
+
+        amazon.Login.setClientId(clientId);
+        loginButton.disabled = false;
+        loginButton.textContent = 'Sign in with Amazon';
+        setStatus('Ready. Scope: ' + scope);
+      };
+
+      loginButton.addEventListener('click', function () {
+        loginButton.disabled = true;
+        loginButton.textContent = 'Signing in...';
+        setStatus('Amazon sign-in window opened. Finish the login there.');
+
+        amazon.Login.authorize(
+          {
+            scope: scope,
+            pkce: true,
+            interactive: 'always'
+          },
+          function (response) {
+            if (response.error) {
+              fail('OAuth error: ' + response.error);
+              return;
+            }
+
+            amazon.Login.retrieveToken(response.code, function (tokenResponse) {
+              if (tokenResponse.error) {
+                fail('Token error: ' + tokenResponse.error);
+                return;
+              }
+
+              sendToDesktop(tokenResponse);
+            });
+          }
+        );
+      });
+
+      (function (documentRef) {
+        const script = documentRef.createElement('script');
+        script.type = 'text/javascript';
+        script.async = true;
+        script.id = 'amazon-login-sdk';
+        script.src = 'https://assets.loginwithamazon.com/sdk/na/login1.js';
+        script.onerror = function () {
+          fail('Could not load the Amazon login SDK. Check the internet connection, then reload.');
+        };
+        documentRef.getElementById('amazon-root').appendChild(script);
+      })(document);
+    </script>
+  </body>
+</html>
